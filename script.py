@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import random
+import math
 
 def show_img(img):
     cv2.imshow('image', img)
@@ -20,13 +22,65 @@ def get_dis_to_line(point, line_pt_1, line_pt_2, img):
 
 def get_grouped_lines(lines):
     if not(lines is None):
-        # Group the nearby lines together (execpecting 3 groups)
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-        ret, label, grouped_lines = cv2.kmeans(lines, 3,None,  criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+        ret, label, grouped_lines = cv2.kmeans(lines, 2,None,  criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
         return grouped_lines
     else:
         print("There were no lines found")
         return []
+
+def get_river_sides(lines):
+    # Apply RANSAC to find the river edges
+
+    # Choose two lines at random
+    # If their r's  are too similar, disregard the sample (since two lines of the same side have been chosen)
+    # Error is the sum of the squares of the angle differences to other lines on this side of the river
+    # Lines are judged to be on the same side of the rive if their r's are similar
+
+    #Lines format is rho 0 theta 1 
+
+    r_threshold = 30
+    iterations = 100
+
+    if lines is None:
+        return []
+
+    random.seed()
+
+
+    # Some of the lines have a negative rho and theta which is approx pi
+    # First go through and change these so everyone is consistent
+    for i in range(len(lines)):
+        if lines[i][0][0] < 0:
+            lines[i][0][0] = 0 - lines[i][0][0]
+            lines[i][0][1] -= math.pi
+
+    lowest_error = 100000
+    best_line_pair = []
+    for i in range(iterations):
+        sample = []
+        sample.append(lines[random.randint(0, len(lines) - 1)][0])
+        sample.append(lines[random.randint(0, len(lines) - 1)][0])
+
+        # Disregard sample if lines are on the same side of the river
+        if abs(sample[0][0] - sample [1][0]) < r_threshold:
+            continue
+
+        # Calculate the squared error
+        error_total = 0
+        for line in lines:
+            line = line[0]
+            for sample_line in sample:
+                if (abs(line[0] - sample_line[0]) < r_threshold):
+                    error_total += pow(line[0] - sample_line[0], 2)
+
+        if error_total < lowest_error:
+            lowest_error = error_total
+            best_line_pair = sample
+        
+
+    return best_line_pair
+    
 
 def filter(img):
 
@@ -75,6 +129,8 @@ while(cap.isOpened()):
     # Find Hough lines
     lines = cv2.HoughLines(img, 1, np.pi/180, threshold = 40)
 
+    lines = get_river_sides(lines)
+
     # Draw the submarine on the image
     # sub_pos = (int(len(raw_img[0])/2), len(raw_img) - 20)
     # cv2.circle(raw_img, sub_pos, 5, (100, 255, 0), -1)
@@ -85,7 +141,7 @@ while(cap.isOpened()):
     # text_pos_counter = 0
     if lines is not None:
         for line in lines:
-            line = line[0]
+            # line = line[0]
             theta = line[1]
             rho = line[0]
             # print("theta: ", theta, " rho: ", rho)
