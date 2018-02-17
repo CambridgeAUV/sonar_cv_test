@@ -1,24 +1,81 @@
+#!/usr/bin/env python
+
 import cv2
 import numpy as np
 import random
 import math
+import rospy
+from std_msgs.msg import Float32MultiArray
+import copy
 
 def show_img(img):
     cv2.imshow('image', img)
     cv2.waitKey(0)
 
-def get_dis_to_line(point, line_pt_1, line_pt_2, img):
+def get_dis_to_line(point, line_pt_1, line_pt_2):
+    # Given a point and two points on a line (line_pt_1 and line_pt_2) returns
+    # the shortest distance from the point to the line through those two points.
+    # print ("Inputs to get_dis_to_line: ", point, " ", line_pt_1, " ", line_pt_2)
+
+
     line_pt_1.append(0)
     line_pt_2.append(0)
     point.append(0)
     line_vector = np.array(line_pt_2) - np.array(line_pt_1)
     perp_line = np.cross(line_vector, [0, 0, 1])
     unit_perp_line = perp_line / np.linalg.norm(perp_line)
+
     dis_to_line = np.dot(unit_perp_line, np.array(line_pt_2) - np.array(point))
 
     perp_line_with_dis = unit_perp_line * dis_to_line
-    cv2.line(img, (point[0], point[1]), (point[0] + int(perp_line_with_dis[0]), point[1] + int(perp_line_with_dis[1])), (255, 0, 0), 2)
+    # cv2.line(img, (point[0], point[1]), (point[0] + int(perp_line_with_dis[0]), point[1] + int(perp_line_with_dis[1])), (255, 0, 0), 2)
     return abs(dis_to_line)
+
+def get_two_points_on_a_line(line):
+    #Given a line of the form [rho, theta] returns a list of the form
+    #   [x1, y1, x2, y2] where x1,y1 and x2,y2 are two points on the line
+    theta = line[1]
+    rho = line[0]
+    a = np.cos(theta)
+    b = np.sin(theta)
+    x0 = a*rho
+    y0 = b*rho
+    length = 2000
+    x1 = int(x0 + length*(-b))
+    y1 = int(y0 + length*(a))
+    x2 = int(x0 - length*(-b))
+    y2 = int(y0 - length*(a))
+    return [x1, y1, x2, y2]
+
+def order_lines (inp_set, image_height):
+    # Orders inp_set by each line's distance to the point (0, image_height/2)
+    # Expecting lines of the form [rho, theta]
+
+    lines = copy.deepcopy(inp_set)
+    original_lines_length = len(lines)
+
+    ordered_new_set = []
+    index_of_closest_line = 0
+    closest_distance = 99999
+
+    for c in range(original_lines_length): 
+
+        for i in range(len(lines)):
+            two_points_on_line = get_two_points_on_a_line(lines[i])
+            dis = get_dis_to_line([0,image_height/2], two_points_on_line[0:2], two_points_on_line[2:4])
+            if (dis < closest_distance):
+                closest_distance = dis
+                index_of_closest_line = i
+
+        ordered_new_set.append(lines[index_of_closest_line])
+        del lines[index_of_closest_line]
+
+        closest_distance = 99999
+        index_of_closest_line = 0
+
+    return ordered_new_set
+
+
 
 def get_grouped_lines(lines):
     if not(lines is None):
@@ -109,8 +166,14 @@ def filter(img):
 
     return img
 
-cap = cv2.VideoCapture('./sonar_vid.avi')
+cap = cv2.VideoCapture('/home/andrew/code/sonar_cv_test/sonar_vid_crop.avi')
+publisher = rospy.Publisher('river_sides', Float32MultiArray, queue_size = 10)
+# The format of the message is: distance to left side, distance to right side,
+# angle of left side (CW from vertical, rads), angle of right side (CW from vertical, rads).
+rospy.init_node('sonar_cv', anonymous = True)
+rate = rospy.Rate(10)
 
+old_lines = []
 while(cap.isOpened()):
 
     ret, raw_img = cap.read()
@@ -132,12 +195,18 @@ while(cap.isOpened()):
     lines = get_river_sides(lines)
 
     # Draw the submarine on the image
-    # sub_pos = (int(len(raw_img[0])/2), len(raw_img) - 20)
-    # cv2.circle(raw_img, sub_pos, 5, (100, 255, 0), -1)
+    sub_pos = (int(len(raw_img[0])/2), len(raw_img) - 20)
+    cv2.circle(raw_img, sub_pos, 5, (100, 255, 0), -1)
 
     # Draw the lines on the original image and find the distance to the lines from the submarine
 
-    # dis_to_lines = []
+    dis_to_lines = []
+
+
+    if not(old_lines == None):
+        lines = order_lines(lines, len(raw_img))
+
+
     # text_pos_counter = 0
     if lines is not None:
         for line in lines:
@@ -158,10 +227,17 @@ while(cap.isOpened()):
             # x1, y1, x2, y2 = tuple(line[0])
             cv2.line(raw_img, (x1, y1), (x2, y2), (0, 0, 255), 1)
 
-            # dis_to_line = get_dis_to_line([sub_pos[0], sub_pos[1]], [x1, y1], [x2, y2], raw_img)
-            # print("dis_to_line: ", dis_to_line)
+            dis_to_line = get_dis_to_line([sub_pos[0], sub_pos[1]], [x1, y1], [x2, y2])
+            print("dis_to_line: ", dis_to_line)
+            dis_to_lines.append(dis_to_line)
             # # cv2.putText(raw_img, "Line " + str(text_pos_counter) + " dis: " + str(dis_to_line), (100 , 200 + 100 * text_pos_counter), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255))
             # text_pos_counter += 1
+
+    message_packet = Float32MultiArray(data=dis_to_lines)
+
+    publisher.publish(message_packet)
+
+    print "********"
 
 
 
@@ -171,6 +247,8 @@ while(cap.isOpened()):
     if cv2.waitKey(1) & 0xFF == ord('q'):
         print("Breaking loop")
         break
+
+    rate.sleep()
 cap.release()
 cv2.destroyAllWindows()
 
