@@ -201,6 +201,7 @@ while(cap.isOpened()):
     # Draw the lines on the original image and find the distance to the lines from the submarine
 
     dis_to_lines = []
+    angle_of_lines = []
 
 
     if not(old_lines == None):
@@ -213,7 +214,9 @@ while(cap.isOpened()):
             # line = line[0]
             theta = line[1]
             rho = line[0]
-            # print("theta: ", theta, " rho: ", rho)
+
+            angle_of_lines.append(theta)
+
             a = np.cos(theta)
             b = np.sin(theta)
             x0 = a*rho
@@ -233,7 +236,7 @@ while(cap.isOpened()):
             # # cv2.putText(raw_img, "Line " + str(text_pos_counter) + " dis: " + str(dis_to_line), (100 , 200 + 100 * text_pos_counter), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255))
             # text_pos_counter += 1
 
-    message_packet = Float32MultiArray(data=dis_to_lines)
+    message_packet = Float32MultiArray(data=dis_to_lines + angle_of_lines)
 
     publisher.publish(message_packet)
 
